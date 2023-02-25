@@ -3,111 +3,42 @@ import torch
 from torch.nn import functional as F
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
-import sympy as sp
 import pandas as pd
 import feyn
 from sklearn.model_selection import train_test_split
+
 
 class SMBRLModel(Model):
     def __init__(
         self,
         in_size: int,
         out_size: int,
+        ensemble_size: int,
         device: Union[str, torch.device],
     ):
         super().__init__(device)
         self.in_size = in_size
         self.out_size = out_size
-        self.create_dynamics_func()
         self.ql = feyn.QLattice()
         self.models_matrix = None
+        self.ensemble_size = 1
 
-    def create_dynamics_func(self):
-        self.gravity = 9.8
-        self.masscart = 1.0
-        self.masspole = 0.1
-        self.total_mass = self.masspole + self.masscart
-        self.length = 0.5  # actually half the pole's length
-        self.polemass_length = self.masspole * self.length
-        self.force_mag = 10.0
-        self.tau = 0.02  # seconds between state updates
-        self.kinematics_integrator = "euler"
-        
-        x0,x1,x2,x3,x4 = sp.symbols('x0:5')
-
-        force = x4 * self.force_mag
-        costheta = sp.cos(x2)
-        sintheta = sp.sin(x2)
-
-        # For the interested reader:
-        # https://coneural.org/florian/papers/05_cart_pole.pdf
-        temp = (
-            force + self.polemass_length * x3**2 * sintheta
-        ) / self.total_mass
-        thetaacc = (self.gravity * sintheta - costheta * temp) / (
-            self.length * (4.0 / 3.0 - self.masspole * costheta**2 / self.total_mass)
-        )
-        xacc = temp - self.polemass_length * thetaacc * costheta / self.total_mass
-        
-        delta_x0 = self.tau * x1
-        delta_x1 = self.tau * xacc
-        delta_x2 = self.tau * x3
-        delta_x3 = self.tau * thetaacc
-
-        deltas = [delta_x0, delta_x1, delta_x2, delta_x3]
-        for delta in deltas:
-            print(delta)
-        self.dynamics_func = sp.lambdify((x0, x1, x2, x3, x4), deltas, "numpy")
-
-    def step2(self, stateaction):
-        return torch.t(torch.stack(self.dynamics_func(*torch.t(stateaction))))
-    
-    def step3(self, stateaction):
+    def step(self, stateaction):
+        stateaction = stateaction.cpu()
         stateaction_pd = self.numpy_check_to_DataFrame(stateaction.numpy())
+        # print("Nan count: ", stateaction_pd.isna().sum().sum())
+        # stateaction_pd.fillna(0.0)
+        #stateaction_pd.replace(np.nan, 0.0)
+        # stateaction_pd.interpolate()
         if self.models_matrix is None:
-            print(1)
-            return torch.t(torch.stack(self.dynamics_func(*torch.t(stateaction))))
+            # +1 for reward
+            return torch.rand(stateaction.shape[0], self.out_size)
         else:
-            deltas = self.models_matrix[0][0].predict(stateaction_pd).reshape(-1,1)
+            deltas = self.models_matrix[0][0].predict(stateaction_pd).reshape(-1, 1)
             for i in range(1, self.out_size):
-                delta_i = self.models_matrix[i][0].predict(stateaction_pd).reshape(-1,1)
-                deltas = np.append(deltas, delta_i, axis = 1)
-        return torch.from_numpy(deltas)
-
-    def step(self, state, action):
-        self.gravity = 9.8
-        self.masscart = 1.0
-        self.masspole = 0.1
-        self.total_mass = self.masspole + self.masscart
-        self.length = 0.5  # actually half the pole's length
-        self.polemass_length = self.masspole * self.length
-        self.force_mag = 10.0
-        self.tau = 0.02  # seconds between state updates
-        self.kinematics_integrator = "euler"
-
-        action = action.squeeze()
-        x, x_dot, theta, theta_dot = (state[:,0], state[:,1], state[:,2], state[:,3])
-        force = action * self.force_mag
-        costheta = np.cos(theta)
-        sintheta = np.sin(theta)
-
-        # For the interested reader:
-        # https://coneural.org/florian/papers/05_cart_pole.pdf
-        temp = (
-            force + self.polemass_length * theta_dot**2 * sintheta
-        ) / self.total_mass
-        thetaacc = (self.gravity * sintheta - costheta * temp) / (
-            self.length * (4.0 / 3.0 - self.masspole * costheta**2 / self.total_mass)
-        )
-        xacc = temp - self.polemass_length * thetaacc * costheta / self.total_mass
-
-        x = self.tau * x_dot
-        x_dot = self.tau * xacc
-        theta = self.tau * theta_dot
-        theta_dot = self.tau * thetaacc
-        new_state = torch.stack((x, x_dot, theta, theta_dot), dim=1)
-        #print(list(new_state.shape), list(x.shape))
-        return new_state
+                delta_i = self.models_matrix[i][0].predict(stateaction_pd).reshape(-1, 1)
+                deltas = np.append(deltas, delta_i, axis=1)
+        return torch.from_numpy(deltas).to(self.device)
 
     def forward(self, x: torch.Tensor, *args, **kwargs) -> Tuple[torch.Tensor, ...]:
         """Computes the output of the dynamics model.
@@ -118,12 +49,7 @@ class SMBRLModel(Model):
         Returns:
             (tuple of tensors): all tensors predicted by the model (e.g., .mean and logvar).
         """
-        #print(list(x.shape))
-        #print(self.step(x[:,0:4], x[:,4]))
-        #return torch.ones(x.shape[0], self.out_size), None
-        #return self.step(x[:,0:4], x[:,4]), None
-        #print(self.step(x[:,0:4], x[:,4]))
-        return self.step3(x), None
+        return self.step(x), None
 
     def loss(
         self,
@@ -175,7 +101,7 @@ class SMBRLModel(Model):
         with torch.no_grad():
             pred_mean, _ = self.forward(model_in, use_propagation=False)
             #target = target.repeat((self.num_members, 1, 1))
-            return F.mse_loss(pred_mean, target, reduction="none"), {}
+            return F.mse_loss(pred_mean.to(self.device), target.to(self.device), reduction="none"), {}
 
     def reset(
         self, obs: torch.Tensor, rng: Optional[torch.Generator] = None
@@ -269,30 +195,32 @@ class SMBRLModel(Model):
                 columns = [f'y{i}' for i in range(y.shape[1])]
                 y = pd.DataFrame(y, columns=columns)
             return pd.concat([X, y], axis=1)
-    
-    def update(self, batch):
-        print("update: ", batch.__len__())
-        s, a, ns, _, _ = self._process_batch(batch)
-        x = torch.cat((s, a), dim=1).numpy()
-        y = (ns - s).numpy()
 
-        data = self.numpy_check_to_DataFrame(x,y)
+    def update(self, batch):
+        print("Number of samples: ", batch.__len__())
+        s, a, ns, r, _ = self._process_batch(batch)
+        x = torch.cat((s, a), dim=1).cpu().numpy()
+        delta = (ns - s).cpu().numpy()
+        y = np.append(delta, r.cpu().numpy().reshape(-1, 1), axis=1)
+
+        data = self.numpy_check_to_DataFrame(x, y)
         #train, test = train_test_split(data, test_size=0.1)
-        
+
         # Create best models array for every output dimension
         models_matrix = []
         for i in range(y.shape[1]):
             new_data = data
             for j in range(y.shape[1]):
                 if i != j:
-                    new_data = new_data.drop('y'+str(j), axis=1)
+                    new_data = new_data.drop('y' + str(j), axis=1)
+            train, test = train_test_split(new_data, test_size=0.1)
             starting_models = self.models_matrix[i] if self.models_matrix is not None else None
-            models_i = self.ql.auto_run(new_data, output_name = 'y'+ str(i),
-            starting_models = starting_models)
+            models_i = self.ql.auto_run(train, output_name='y' + str(i),
+                                        starting_models=starting_models, n_epochs=10)
             models_matrix.append(models_i)
-            models_i[0].plot(data=new_data)
-            print(models_i[0].sympify())
+            # models_i[0].plot(data=new_data)
+            print("Dynamics function for dimension ", i, ": ", models_i[0].sympify(signif=3))
+            print("R2 Score: ", models_i[0].r2_score(test))
         self.models_matrix = models_matrix
         for i in range(y.shape[1]):
             print(self.models_matrix[i][0].sympify(signif=3))
-        

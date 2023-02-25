@@ -8,8 +8,8 @@ population_decay_factor: ${overrides.cem_population_decay_factor}
 colored_noise_exponent: ${overrides.cem_colored_noise_exponent}
 keep_elite_frac: ${overrides.cem_keep_elite_frac}
 alpha: ${overrides.cem_alpha}
-lower_bound: ???
-upper_bound: ???
+lower_bound: 1e3
+upper_bound: -1e3
 return_mean_elites: true
 population_size_module: ${dynamics_model.ensemble_size}
 device: ${device}

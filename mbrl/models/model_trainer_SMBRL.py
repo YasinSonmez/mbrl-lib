@@ -59,14 +59,6 @@ class ModelTrainerSMBRL:
                 color="blue",
                 dump_frequency=1,
             )
-        '''    
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=optim_lr,
-            weight_decay=weight_decay,
-            eps=optim_eps,
-        )
-        '''
 
     def train(
         self,
@@ -209,7 +201,7 @@ class ModelTrainerSMBRL:
                 break
 
         # saving the best models:
-        #if evaluate:
+        # if evaluate:
         #    self._maybe_set_best_weights_and_elite(best_weights, best_val_score)
 
         self._train_iteration += 1

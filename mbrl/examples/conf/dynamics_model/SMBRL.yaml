@@ -1,0 +1,6 @@
+# @package _group_
+_target_: mbrl.models.SMBRLModel
+device: ${device}
+in_size: ???
+out_size: ???
+ensemble_size: 1

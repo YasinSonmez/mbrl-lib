@@ -9,6 +9,7 @@ import gym
 import numpy as np
 import omegaconf
 import torch
+import copy
 
 import mbrl.constants
 import mbrl.models
@@ -17,6 +18,7 @@ import mbrl.types
 import mbrl.util
 import mbrl.util.common
 import mbrl.util.math
+from mbrl.third_party.pytorch_sac import VideoRecorder
 
 EVAL_LOG_FORMAT = mbrl.constants.EVAL_LOG_FORMAT
 
@@ -78,7 +80,7 @@ def train(
     model_env = mbrl.models.ModelEnv(
         env, dynamics_model, termination_fn, reward_fn, generator=torch_generator
     )
-    model_trainer = mbrl.models.ModelTrainer(
+    model_trainer = mbrl.models.ModelTrainerSMBRL(
         dynamics_model,
         optim_lr=cfg.overrides.model_lr,
         weight_decay=cfg.overrides.model_wd,
@@ -94,6 +96,7 @@ def train(
     env_steps = 0
     current_trial = 0
     max_total_reward = -np.inf
+    eval_env = copy.deepcopy(env)
     while env_steps < cfg.overrides.num_steps:
         obs = env.reset()
         agent.reset()
@@ -110,6 +113,10 @@ def train(
                     replay_buffer,
                     work_dir=work_dir,
                 )
+                # --- Evaluate the agent after training ---
+                eval_reward = mbrl.util.common.rollout_agent_trajectories(
+                    eval_env, 1, agent, {}, collect_full_trajectories=True)
+                print("Evaluation reward = ", sum(eval_reward) / len(eval_reward))
 
             # --- Doing env step using the agent and adding to model dataset ---
             next_obs, reward, done, _ = mbrl.util.common.step_env_and_add_to_buffer(

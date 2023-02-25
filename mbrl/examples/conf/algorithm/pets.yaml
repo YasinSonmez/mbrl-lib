@@ -3,8 +3,8 @@ name: "pets"
 
 agent:
   _target_: mbrl.planning.TrajectoryOptimizerAgent
-  action_lb: ???
-  action_ub: ???
+  action_lb: -1e3
+  action_ub: 1e3
   planning_horizon: ${overrides.planning_horizon}
   optimizer_cfg: ${action_optimizer}
   replan_freq: 1
@@ -13,7 +13,7 @@ agent:
 normalize: true
 normalize_double_precision: true
 target_is_delta: true
-initial_exploration_steps: ${overrides.trial_length}
+initial_exploration_steps: 10
 freq_train_model: ${overrides.freq_train_model}
 learned_rewards: ${overrides.learned_rewards}
 
